@@ -128,6 +128,7 @@
     
     <!-- File Upload and Filtering -->
     <div class="file-input">
+      <label for="csvFile">Upload CSV File:</label>
       <input type="file" id="csvFile" accept=".csv" />
       <button onclick="processFile()">Analyze Data</button>
     </div>
@@ -196,49 +197,64 @@
     function cleanData(data) {
       // Define expected columns and possible alternative names
       const expected = {
-        timestamp: ["timestamp", "time", "time_24h"],
-        x: ["x", "gazeX"],
-        y: ["y", "gazeY"],
-        confidence: ["confidence", "conf"],
-        pupilD: ["pupilD", "pupil", "pupilDiameter"],
-        docX: ["docX", "documentX"],
-        docY: ["docY", "documentY"],
-        HeadX: ["HeadX", "headX"],
-        HeadY: ["HeadY", "headY"],
-        HeadZ: ["HeadZ", "headZ"],
-        HeadYaw: ["HeadYaw", "yaw", "headYaw"],
-        HeadPitch: ["HeadPitch", "pitch", "headPitch"],
-        HeadRoll: ["HeadRoll", "roll", "headRoll"]
+        timestamp: ["timestamp"],
+        time_24h: ["time_24h"],
+        x: ["x"],
+        y: ["y"],
+        confidence: ["confidence"],
+        pupilD: ["pupilD"],
+        docX: ["docX"],
+        docY: ["docY"],
+        HeadX: ["HeadX"],
+        HeadY: ["HeadY"],
+        HeadZ: ["HeadZ"],
+        HeadYaw: ["HeadYaw"],
+        HeadPitch: ["HeadPitch"],
+        HeadRoll: ["HeadRoll"]
       };
 
       // Check each row and build a cleaned object
       let cleaned = [];
       data.forEach((row, index) => {
         let newRow = {};
-        let missingCount = 0;
         for (const key in expected) {
           let found = false;
           for (const alt of expected[key]) {
-            if (row.hasOwnProperty(alt) && row[alt] !== "") {
-              newRow[key] = row[alt];
+            if (row.hasOwnProperty(alt)) {
+              // Handle empty string values for numeric fields
+              if (row[alt] === "" && (key === "pupilD" || key.startsWith("Head"))) {
+                newRow[key] = null;
+              } else {
+                newRow[key] = row[alt];
+              }
               found = true;
               break;
             }
           }
           if (!found) {
-            // Column not found; set to null and log a warning
             newRow[key] = null;
-            missingCount++;
           }
         }
-        // Only add row if essential data (timestamp, x, y, pupilD) is present
-        if (newRow.timestamp && newRow.x && newRow.y && newRow.pupilD) {
-          // Convert timestamp to Date if needed
-          if (typeof newRow.timestamp === 'number' || !isNaN(Date.parse(newRow.timestamp))) {
-            newRow.timestamp = new Date(newRow.timestamp);
-          } else {
-            logMessage(`Row ${index} has an invalid timestamp format.`, 'warn');
-          }
+        
+        // Only add row if essential data is present (timestamp, x, y)
+        if (newRow.timestamp && newRow.x && newRow.y) {
+          // Convert Unix timestamp to Date
+          newRow.timestamp = new Date(parseInt(newRow.timestamp));
+          
+          // Convert string values to numbers
+          newRow.x = parseFloat(newRow.x);
+          newRow.y = parseFloat(newRow.y);
+          newRow.confidence = parseFloat(newRow.confidence);
+          newRow.pupilD = newRow.pupilD ? parseFloat(newRow.pupilD) : null;
+          newRow.docX = parseFloat(newRow.docX);
+          newRow.docY = parseFloat(newRow.docY);
+          newRow.HeadX = parseFloat(newRow.HeadX) || 0;
+          newRow.HeadY = parseFloat(newRow.HeadY) || 0;
+          newRow.HeadZ = parseFloat(newRow.HeadZ) || 0;
+          newRow.HeadYaw = parseFloat(newRow.HeadYaw) || 0;
+          newRow.HeadPitch = parseFloat(newRow.HeadPitch) || 0;
+          newRow.HeadRoll = parseFloat(newRow.HeadRoll) || 0;
+          
           cleaned.push(newRow);
         } else {
           logMessage(`Row ${index} excluded due to missing essential data.`, 'warn');
@@ -254,8 +270,9 @@
         // Basic metrics
         const totalPoints = data.length;
         const avgConfidence = mean(data.map(d => d.confidence));
-        const pupilMean = mean(data.map(d => d.pupilD));
-        const pupilStd = standardDeviation(data.map(d => d.pupilD));
+        const validPupilData = data.filter(d => d.pupilD !== null);
+        const pupilMean = mean(validPupilData.map(d => d.pupilD));
+        const pupilStd = standardDeviation(validPupilData.map(d => d.pupilD));
         const headXMean = mean(data.map(d => d.HeadX));
         const headYMean = mean(data.map(d => d.HeadY));
         const headZMean = mean(data.map(d => d.HeadZ));
@@ -268,11 +285,12 @@
         const fixationDurations = computeFixationDurations(data);
         const gazeDispersionX = Math.max(...data.map(d => d.x)) - Math.min(...data.map(d => d.x));
         const gazeDispersionY = Math.max(...data.map(d => d.y)) - Math.min(...data.map(d => d.y));
-        const pupilDerivative = derivative(data.map(d => d.pupilD), data);
+        const pupilDerivative = derivative(validPupilData.map(d => d.pupilD), validPupilData);
         const totalHeadDisplacement = cumulativeHeadDisplacement(data);
 
         return {
           "Total Data Points": totalPoints,
+          "Valid Pupil Data Points": validPupilData.length,
           "Average Confidence": avgConfidence,
           "Pupil Mean": pupilMean,
           "Pupil Std Dev": pupilStd,
@@ -400,12 +418,22 @@
         return;
       }
       Papa.parse(file, {
-        header: true,
-        dynamicTyping: true,
+        header: false,
+        dynamicTyping: false,
         complete: function (results) {
           try {
-            // Clean and standardize data even if CSV headers are not exactly as expected
-            rawData = cleanData(results.data);
+            // Convert array data to object with headers
+            const headers = ["timestamp", "time_24h", "x", "y", "confidence", "pupilD", "docX", "docY", "HeadX", "HeadY", "HeadZ", "HeadYaw", "HeadPitch", "HeadRoll"];
+            const processedData = results.data.map(row => {
+              const obj = {};
+              headers.forEach((header, i) => {
+                obj[header] = row[i];
+              });
+              return obj;
+            });
+            
+            // Clean and standardize data
+            rawData = cleanData(processedData);
             logMessage("File processed successfully. Data loaded: " + rawData.length + " records.");
             applyFilters();
           } catch (err) {
@@ -436,25 +464,32 @@
         logError("No data available after filtering.");
         return;
       }
-      // Generate labels based on time (using index if needed)
-      const timestamps = filteredData.map(d => d.timestamp.toLocaleTimeString());
+      
+      // Generate labels based on time
+      const timestamps = filteredData.map(d => d.time_24h.split(' ')[1]); // Use time part only
+      
       // Update stats cards
       const stats = computeBasicStats(filteredData);
       updateBasicStats(stats);
+      
       // Eye Movement Chart (Scatter plot)
       createChart('eyeMovementChart', 'scatter', [], [{
         label: 'Eye Position',
         data: filteredData.map(d => ({ x: d.x, y: d.y })),
-        backgroundColor: 'rgba(54, 162, 235, 0.5)'
+        backgroundColor: filteredData.map(d => `rgba(54, 162, 235, ${d.confidence})`),
+        pointRadius: 3
       }]);
+      
       // Pupil Dilation Chart (Line chart)
-      createChart('pupilDilationChart', 'line', timestamps, [{
+      const validPupilData = filteredData.filter(d => d.pupilD !== null);
+      createChart('pupilDilationChart', 'line', validPupilData.map(d => d.time_24h.split(' ')[1]), [{
         label: 'Pupil Diameter',
-        data: filteredData.map(d => d.pupilD),
+        data: validPupilData.map(d => d.pupilD),
         borderColor: 'rgba(75, 192, 192, 1)',
         fill: false,
         tension: 0.1
       }]);
+      
       // Head Displacement Chart (Line chart)
       const headDisplacements = [];
       for (let i = 1; i < filteredData.length; i++) {
@@ -470,6 +505,7 @@
         fill: false,
         tension: 0.1
       }]);
+      
       // Saccade Chart (Bar chart showing saccade velocity threshold crossings)
       const saccadeVelocities = computeSaccadeVelocities(filteredData);
       const saccadeFlags = saccadeVelocities.map(v => v > 30 ? 1 : 0);
@@ -478,6 +514,7 @@
         data: saccadeFlags,
         backgroundColor: 'rgba(255, 99, 132, 0.5)'
       }]);
+      
       logMessage("Charts rendered successfully.");
     }
   </script>
