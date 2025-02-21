@@ -192,6 +192,62 @@
       logMessage("Toggled dark/light mode.");
     }
 
+    // Function to clean and map data even if CSV headers don't match exactly
+    function cleanData(data) {
+      // Define expected columns and possible alternative names
+      const expected = {
+        timestamp: ["timestamp", "time", "time_24h"],
+        x: ["x", "gazeX"],
+        y: ["y", "gazeY"],
+        confidence: ["confidence", "conf"],
+        pupilD: ["pupilD", "pupil", "pupilDiameter"],
+        docX: ["docX", "documentX"],
+        docY: ["docY", "documentY"],
+        HeadX: ["HeadX", "headX"],
+        HeadY: ["HeadY", "headY"],
+        HeadZ: ["HeadZ", "headZ"],
+        HeadYaw: ["HeadYaw", "yaw", "headYaw"],
+        HeadPitch: ["HeadPitch", "pitch", "headPitch"],
+        HeadRoll: ["HeadRoll", "roll", "headRoll"]
+      };
+
+      // Check each row and build a cleaned object
+      let cleaned = [];
+      data.forEach((row, index) => {
+        let newRow = {};
+        let missingCount = 0;
+        for (const key in expected) {
+          let found = false;
+          for (const alt of expected[key]) {
+            if (row.hasOwnProperty(alt) && row[alt] !== "") {
+              newRow[key] = row[alt];
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // Column not found; set to null and log a warning
+            newRow[key] = null;
+            missingCount++;
+          }
+        }
+        // Only add row if essential data (timestamp, x, y, pupilD) is present
+        if (newRow.timestamp && newRow.x && newRow.y && newRow.pupilD) {
+          // Convert timestamp to Date if needed
+          if (typeof newRow.timestamp === 'number' || !isNaN(Date.parse(newRow.timestamp))) {
+            newRow.timestamp = new Date(newRow.timestamp);
+          } else {
+            logMessage(`Row ${index} has an invalid timestamp format.`, 'warn');
+          }
+          cleaned.push(newRow);
+        } else {
+          logMessage(`Row ${index} excluded due to missing essential data.`, 'warn');
+        }
+      });
+      logMessage("Data cleaning complete. Valid records: " + cleaned.length);
+      return cleaned;
+    }
+
     // Compute basic statistics and advanced scientific metrics
     function computeBasicStats(data) {
       try {
@@ -330,14 +386,12 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          scales: {
-            y: { beginAtZero: true }
-          }
+          scales: { y: { beginAtZero: true } }
         }
       });
     }
 
-    // Process CSV file input using PapaParse
+    // Process CSV file input using PapaParse and clean the data if necessary
     function processFile() {
       const fileInput = document.getElementById('csvFile');
       const file = fileInput.files[0];
@@ -350,13 +404,8 @@
         dynamicTyping: true,
         complete: function (results) {
           try {
-            // Filter for required columns and convert timestamp to Date
-            rawData = results.data.filter(row =>
-              row.timestamp && row.x && row.y && row.pupilD && row.HeadX && row.HeadY && row.HeadZ
-            );
-            rawData.forEach(row => {
-              row.timestamp = new Date(row.timestamp);
-            });
+            // Clean and standardize data even if CSV headers are not exactly as expected
+            rawData = cleanData(results.data);
             logMessage("File processed successfully. Data loaded: " + rawData.length + " records.");
             applyFilters();
           } catch (err) {
