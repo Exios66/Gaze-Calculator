@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eye Tracking Analysis Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card, .chart-container, .file-input {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h2 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .filter-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        select, input, button {
+            padding: 8px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Eye Tracking Analysis Dashboard</h1>
+
+        <div class="file-input">
+            <input type="file" id="csvFile" accept=".csv">
+            <button onclick="processFile()">Analyze Data</button>
+        </div>
+
+        <div class="filter-container">
+            <label>Confidence Threshold:</label>
+            <input type="number" id="confidenceFilter" min="0" max="1" step="0.01" value="0.95">
+            <button onclick="applyFilters()">Apply Filter</button>
+        </div>
+
+        <div class="stats-container" id="basicStats"></div>
+
+        <div class="chart-container">
+            <h2>Eye Movement Trajectory</h2>
+            <canvas id="eyeMovementChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>Pupil Dilation Over Time</h2>
+            <canvas id="pupilDilationChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>Head Displacement Over Time</h2>
+            <canvas id="headMovementChart"></canvas>
+        </div>
+
+        <div class="chart-container">
+            <h2>Saccades Detected</h2>
+            <canvas id="saccadeChart"></canvas>
+        </div>
+
+    </div>
+
+    <script>
+        let rawData = [];
+        let filteredData = [];
+        let charts = {};
+
+        function computeBasicStats(data) {
+            return {
+                "Total Data Points": data.length,
+                "Average Confidence": mean(data.map(d => d.confidence)),
+                "Pupil Diameter Mean": mean(data.map(d => d.pupilD)),
+                "HeadX Mean": mean(data.map(d => d.HeadX)),
+                "HeadY Mean": mean(data.map(d => d.HeadY)),
+                "HeadZ Mean": mean(data.map(d => d.HeadZ)),
+                "HeadYaw Variance": variance(data.map(d => d.HeadYaw)),
+                "HeadPitch Variance": variance(data.map(d => d.HeadPitch)),
+                "HeadRoll Variance": variance(data.map(d => d.HeadRoll))
+            };
+        }
+
+        function detectSaccades(data, threshold = 30) {
+            return data.map((d, i) => {
+                if (i === 0) return 0;
+                const dx = d.x - data[i - 1].x;
+                const dy = d.y - data[i - 1].y;
+                const dt = (d.timestamp - data[i - 1].timestamp) / 1000;
+                return dt > 0 ? Math.sqrt(dx * dx + dy * dy) / dt > threshold : 0;
+            });
+        }
+
+        function mean(arr) {
+            return arr.reduce((a, b) => a + b, 0) / arr.length;
+        }
+
+        function variance(arr) {
+            const m = mean(arr);
+            return mean(arr.map(x => (x - m) ** 2));
+        }
+
+        function updateBasicStats(stats) {
+            const container = document.getElementById('basicStats');
+            container.innerHTML = '';
+
+            for (const [key, value] of Object.entries(stats)) {
+                const card = document.createElement('div');
+                card.className = 'stat-card';
+                card.innerHTML = `<h3>${key}</h3><p>${value.toFixed(2)}</p>`;
+                container.appendChild(card);
+            }
+        }
+
+        function createChart(id, type, labels, datasets) {
+            const ctx = document.getElementById(id).getContext('2d');
+            if (charts[id]) charts[id].destroy();
+            charts[id] = new Chart(ctx, { type, data: { labels, datasets } });
+        }
+
+        function processFile() {
+            const fileInput = document.getElementById('csvFile');
+            const file = fileInput.files[0];
+
+            if (file) {
+                Papa.parse(file, {
+                    header: true,
+                    dynamicTyping: true,
+                    complete: function(results) {
+                        rawData = results.data.filter(row => row.timestamp && row.x && row.y && row.pupilD && row.HeadX);
+                        rawData.forEach(row => row.timestamp = new Date(row.timestamp));
+                        applyFilters();
+                    }
+                });
+            }
+        }
+
+        function applyFilters() {
+            const confidenceThreshold = parseFloat(document.getElementById('confidenceFilter').value);
+            filteredData = rawData.filter(row => row.confidence >= confidenceThreshold);
+            renderCharts();
+        }
+
+        function renderCharts() {
+            if (filteredData.length === 0) return;
+
+            const timestamps = filteredData.map(d => d.timestamp.toLocaleTimeString());
+            const saccades = detectSaccades(filteredData);
+            const pupilDilation = filteredData.map(d => d.pupilD);
+
+            updateBasicStats(computeBasicStats(filteredData));
+
+            createChart('eyeMovementChart', 'scatter', [], [{
+                label: 'Eye Position',
+                data: filteredData.map(d => ({ x: d.x, y: d.y })),
+                backgroundColor: 'rgba(54, 162, 235, 0.5)'
+            }]);
+
+            createChart('pupilDilationChart', 'line', timestamps, [{
+                label: 'Pupil Diameter',
+                data: pupilDilation,
+                borderColor: 'rgba(75, 192, 192, 1)'
+            }]);
+
+            createChart('saccadeChart', 'bar', timestamps, [{
+                label: 'Saccades',
+                data: saccades,
+                backgroundColor: 'rgba(255, 99, 132, 0.5)'
+            }]);
+        }
+    </script>
+</body>
+</html>
