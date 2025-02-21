@@ -193,73 +193,90 @@
       logMessage("Toggled dark/light mode.");
     }
 
-    // Function to clean and map data even if CSV headers don't match exactly
-    function cleanData(data) {
-      // Define expected columns and possible alternative names
-      const expected = {
-        timestamp: ["timestamp"],
-        time_24h: ["time_24h"],
-        x: ["x"],
-        y: ["y"],
-        confidence: ["confidence"],
-        pupilD: ["pupilD"],
-        docX: ["docX"],
-        docY: ["docY"],
-        HeadX: ["HeadX"],
-        HeadY: ["HeadY"],
-        HeadZ: ["HeadZ"],
-        HeadYaw: ["HeadYaw"],
-        HeadPitch: ["HeadPitch"],
-        HeadRoll: ["HeadRoll"]
-      };
-
-      // Check each row and build a cleaned object
-      let cleaned = [];
-      data.forEach((row, index) => {
-        let newRow = {};
-        for (const key in expected) {
-          let found = false;
-          for (const alt of expected[key]) {
-            if (row.hasOwnProperty(alt)) {
-              // Handle empty string values for numeric fields
-              if (row[alt] === "" && (key === "pupilD" || key.startsWith("Head"))) {
-                newRow[key] = null;
-              } else {
-                newRow[key] = row[alt];
-              }
-              found = true;
-              break;
-            }
+    // Process CSV file input using PapaParse and clean the data if necessary
+    function processFile() {
+      const fileInput = document.getElementById('csvFile');
+      const file = fileInput.files[0];
+      if (!file) {
+        logError("No file selected.");
+        return;
+      }
+      Papa.parse(file, {
+        header: false,
+        dynamicTyping: false,
+        skipEmptyLines: true,
+        complete: function (results) {
+          try {
+            // Skip the first row if it's a header
+            const dataRows = results.data[0][0] === "timestamp" ? results.data.slice(1) : results.data;
+            
+            // Convert array data to object with headers
+            const headers = ["timestamp", "time_24h", "x", "y", "confidence", "pupilD", "docX", "docY", "HeadX", "HeadY", "HeadZ", "HeadYaw", "HeadPitch", "HeadRoll"];
+            const processedData = dataRows.map(row => {
+              const obj = {};
+              headers.forEach((header, i) => {
+                // Handle empty strings and undefined values
+                obj[header] = row[i] === undefined || row[i] === '' ? null : row[i];
+              });
+              return obj;
+            });
+            
+            // Clean and standardize data
+            rawData = cleanData(processedData);
+            logMessage("File processed successfully. Data loaded: " + rawData.length + " records.");
+            applyFilters();
+          } catch (err) {
+            logError("Error processing file: " + err.message);
           }
-          if (!found) {
-            newRow[key] = null;
-          }
-        }
-        
-        // Only add row if essential data is present (timestamp, x, y)
-        if (newRow.timestamp && newRow.x && newRow.y) {
-          // Convert Unix timestamp to Date
-          newRow.timestamp = new Date(parseInt(newRow.timestamp));
-          
-          // Convert string values to numbers
-          newRow.x = parseFloat(newRow.x);
-          newRow.y = parseFloat(newRow.y);
-          newRow.confidence = parseFloat(newRow.confidence);
-          newRow.pupilD = newRow.pupilD ? parseFloat(newRow.pupilD) : null;
-          newRow.docX = parseFloat(newRow.docX);
-          newRow.docY = parseFloat(newRow.docY);
-          newRow.HeadX = parseFloat(newRow.HeadX) || 0;
-          newRow.HeadY = parseFloat(newRow.HeadY) || 0;
-          newRow.HeadZ = parseFloat(newRow.HeadZ) || 0;
-          newRow.HeadYaw = parseFloat(newRow.HeadYaw) || 0;
-          newRow.HeadPitch = parseFloat(newRow.HeadPitch) || 0;
-          newRow.HeadRoll = parseFloat(newRow.HeadRoll) || 0;
-          
-          cleaned.push(newRow);
-        } else {
-          logMessage(`Row ${index} excluded due to missing essential data.`, 'warn');
+        },
+        error: function(err) {
+          logError("PapaParse error: " + err.message);
         }
       });
+    }
+
+    // Function to clean and map data even if CSV headers don't match exactly
+    function cleanData(data) {
+      let cleaned = [];
+      data.forEach((row, index) => {
+        try {
+          // Skip rows that are completely empty
+          if (!row || Object.values(row).every(val => val === null)) {
+            return;
+          }
+
+          let newRow = {};
+          
+          // Convert Unix timestamp to Date and store both timestamp formats
+          newRow.timestamp = new Date(parseInt(row.timestamp));
+          newRow.time_24h = row.time_24h;
+          
+          // Convert numeric fields, using null for empty/invalid values
+          newRow.x = parseFloat(row.x);
+          newRow.y = parseFloat(row.y);
+          newRow.confidence = parseFloat(row.confidence);
+          newRow.pupilD = row.pupilD ? parseFloat(row.pupilD) : null;
+          newRow.docX = parseFloat(row.docX);
+          newRow.docY = parseFloat(row.docY);
+          newRow.HeadX = parseFloat(row.HeadX) || 0;
+          newRow.HeadY = parseFloat(row.HeadY) || 0;
+          newRow.HeadZ = parseFloat(row.HeadZ) || 0;
+          newRow.HeadYaw = parseFloat(row.HeadYaw) || 0;
+          newRow.HeadPitch = parseFloat(row.HeadPitch) || 0;
+          newRow.HeadRoll = parseFloat(row.HeadRoll) || 0;
+
+          // Only exclude row if we can't parse the essential coordinates
+          if (isNaN(newRow.x) || isNaN(newRow.y)) {
+            logMessage(`Row ${index} excluded due to invalid x,y coordinates.`, 'warn');
+            return;
+          }
+
+          cleaned.push(newRow);
+        } catch (err) {
+          logMessage(`Error processing row ${index}: ${err.message}`, 'warn');
+        }
+      });
+      
       logMessage("Data cleaning complete. Valid records: " + cleaned.length);
       return cleaned;
     }
@@ -405,43 +422,6 @@
           responsive: true,
           maintainAspectRatio: false,
           scales: { y: { beginAtZero: true } }
-        }
-      });
-    }
-
-    // Process CSV file input using PapaParse and clean the data if necessary
-    function processFile() {
-      const fileInput = document.getElementById('csvFile');
-      const file = fileInput.files[0];
-      if (!file) {
-        logError("No file selected.");
-        return;
-      }
-      Papa.parse(file, {
-        header: false,
-        dynamicTyping: false,
-        complete: function (results) {
-          try {
-            // Convert array data to object with headers
-            const headers = ["timestamp", "time_24h", "x", "y", "confidence", "pupilD", "docX", "docY", "HeadX", "HeadY", "HeadZ", "HeadYaw", "HeadPitch", "HeadRoll"];
-            const processedData = results.data.map(row => {
-              const obj = {};
-              headers.forEach((header, i) => {
-                obj[header] = row[i];
-              });
-              return obj;
-            });
-            
-            // Clean and standardize data
-            rawData = cleanData(processedData);
-            logMessage("File processed successfully. Data loaded: " + rawData.length + " records.");
-            applyFilters();
-          } catch (err) {
-            logError("Error processing file: " + err.message);
-          }
-        },
-        error: function(err) {
-          logError("PapaParse error: " + err.message);
         }
       });
     }
